@@ -55,7 +55,7 @@ export const getDataForPeriod = async (env: Env, period: Periods, fiat: Fiats): 
  * @returns The maximum age in milliseconds.
  */
 const getMaxAgeAllowed = (period: Periods): number => {
-  if (period === Periods.oneHour) return 60 * 1000 // 1 minute
+  if (period === Periods.oneHour) return 10 * 60 * 1000 // 10 minutes
   if (period === Periods.oneDay) return 60 * 60 * 1000 // 1 hour
   return 24 * 60 * 60 * 1000 // 24 hours for all other periods
 }

@@ -1,5 +1,5 @@
 import { isValidResetToken } from './utils'
-import { Env, Fiats, Periods } from './types'
+import { Env, Fiats, KVData, Periods } from './types'
 import { getDataForPeriod, periodNeedsUpdate, resetKVStorage, updateDataForPeriod } from './kv'
 
 const corsHeaders = {
@@ -26,25 +26,59 @@ export default {
       return respondWith(null, 204)
     }
 
+    let data: KVData | null = null
+
+    // Extract params from request
+    const fiat = extractFiatFromRequest(request) // default to USD
+    const period = extractPeriodFromRequest(request) // default to oneDay
+    const resetToken = await extractResetTokenFromRequest(request) // optional
+
+    // Check for reset token and reset KV storage if valid
     try {
-      // Check for reset token and reset KV storage if valid
-      const resetToken = await extractResetTokenFromRequest(request)
       if (resetToken && (await isValidResetToken(resetToken))) {
         await resetKVStorage(env)
         return respondWith({ status: 'KV storage reset successfully' }, 200)
       }
-      // Extract period and fiat from the request, check if data needs to be updated, and return data
-      const period = extractPeriodFromRequest(request)
-      const fiat = extractFiatFromRequest(request)
-      const data = (await periodNeedsUpdate(env, period, fiat))
-        ? await updateDataForPeriod(env, period, fiat)
-        : await getDataForPeriod(env, period, fiat)
-      const result = data ?? { error: 'No data available' }
-      return respondWith(result, 200)
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Internal server error'
-      return respondWith({ error: message }, 500)
+      return respondWith({ error: `Unable to reset KV storage: ${extractErrorMessage(error)}` }, 500)
     }
+
+    // Determine whether cached data is stale; if we can't tell, assume an update is needed.
+    let needsUpdate = true
+    try {
+      needsUpdate = await periodNeedsUpdate(env, period, fiat)
+    } catch {
+      needsUpdate = true
+    }
+
+    if (needsUpdate) {
+      try {
+        data = await updateDataForPeriod(env, period, fiat)
+      } catch (error) {
+        // Fallback to cached data if updating fails
+        try {
+          data = await getDataForPeriod(env, period, fiat)
+        } catch {}
+
+        if (!data) {
+          return respondWith({ error: `Failed to update data: ${extractErrorMessage(error)}` }, 500)
+        }
+      }
+    } else {
+      try {
+        data = await getDataForPeriod(env, period, fiat)
+      } catch (error) {
+        // If cache read fails, try to refresh as a last resort.
+        try {
+          data = await updateDataForPeriod(env, period, fiat)
+        } catch {
+          return respondWith({ error: `Failed to get data: ${extractErrorMessage(error)}` }, 500)
+        }
+      }
+    }
+
+    const result = data ?? { error: 'No data available' }
+    return respondWith(result, 200)
   },
 } satisfies ExportedHandler<Env>
 
@@ -63,4 +97,10 @@ const extractFiatFromRequest = (request: Request): Fiats => {
 const extractResetTokenFromRequest = async (request: Request): Promise<string | null> => {
   const url = new URL(request.url)
   return url.searchParams.get('reset')
+}
+
+const extractErrorMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  return 'Unknown error'
 }
