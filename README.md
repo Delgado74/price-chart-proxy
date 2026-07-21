@@ -50,10 +50,11 @@ The Worker `fetch` handler:
 - returns JSON with CORS headers on both success and error paths.
 
 Stale-while-revalidate: if cached data exists it is always served immediately. When it is
-stale, a refresh runs in the background (`ctx.waitUntil`) guarded by a best-effort KV lock,
-so bursts of requests never stampede the upstream APIs and upstream failures (e.g. rate
-limits) never surface to users once a key has been populated. Only a completely cold cache
-blocks on an upstream fetch.
+stale, a refresh runs in the background (`ctx.waitUntil`) guarded by a best-effort KV lock
+that throttles refreshes to roughly one per key per minute per colo (KV is eventually
+consistent, so the lock deduplicates within a colo rather than globally). Upstream failures
+(e.g. rate limits) never surface to users once a key has been populated; only a completely
+cold cache blocks on an upstream fetch.
 
 ### 2) Cache Layer (`kv.ts`)
 
@@ -67,10 +68,11 @@ The module provides:
 - `refreshDataForPeriod`: lock-guarded background refresh that swallows errors,
 - `resetKVStorage`: delete all keys in the namespace.
 
-Cache freshness policy (the chart UX minimum granularity is one hour, so nothing
-refreshes more often than hourly):
+Cache freshness policy:
 
-- `oneHour`, `oneDay`: refresh after 1 hour,
+- `oneHour`: refresh after 10 minutes (its payload only covers the trailing hour, so an
+  hourly TTL would let the displayed window drift entirely into the past),
+- `oneDay`: refresh after 1 hour,
 - `oneWeek`, `oneMonth`, `oneYear`, `all`: refresh after 24 hours.
 
 Data keys never expire, so stale data is always available as a fallback when upstream

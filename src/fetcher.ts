@@ -23,7 +23,8 @@ export const fetchDataForPeriod = async (period: Periods, fiat: Fiats, env: Env)
     const data = await coinbase.fetchDataForPeriod(period, fiat)
     if (!data || data.length === 0) throw new Error('No data returned from Coinbase API')
     return { data, from: 'coinbase', when: Date.now() }
-  } catch {
+  } catch (error) {
+    console.error(`Coinbase fetch failed for ${period}-${fiat}, falling back to Coingecko:`, error)
     const data = await coingecko.fetchDataForPeriod(period, fiat, env.COINGECKO_API_KEY)
     if (!data || data.length === 0) throw new Error('No data returned from Coingecko API')
     return { data, from: 'coingecko', when: Date.now() }

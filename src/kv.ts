@@ -30,7 +30,12 @@ export const isStale = (data: KVData, period: Periods): boolean => {
  */
 export const updateDataForPeriod = async (env: Env, period: Periods, fiat: Fiats): Promise<KVData> => {
   const kvData = await fetchDataForPeriod(period, fiat, env)
-  await saveData(env, getKey(period, fiat), kvData)
+  try {
+    await saveData(env, getKey(period, fiat), kvData)
+  } catch (error) {
+    // The fetched data is still good — serve it even if caching it failed
+    console.error(`Failed to cache data for ${getKey(period, fiat)}:`, error)
+  }
   return kvData
 }
 
@@ -50,7 +55,11 @@ export const refreshDataForPeriod = async (env: Env, period: Periods, fiat: Fiat
     if (locked) return
     await env.price_chart_proxy_kv.put(lockKey, '1', { expirationTtl: 60 })
     await updateDataForPeriod(env, period, fiat)
-  } catch {}
+  } catch (error) {
+    // Swallowed on purpose (stale data keeps being served), but logged so a
+    // permanently failing upstream is visible in Workers Logs
+    console.error(`Background refresh failed for ${getKey(period, fiat)}:`, error)
+  }
 }
 
 /**
@@ -67,13 +76,13 @@ export const getDataForPeriod = async (env: Env, period: Periods, fiat: Fiats): 
 
 /**
  * Returns the maximum allowed age for updating the cached data based on the period.
- * The minimum granularity in the chart UX is one hour, so nothing is refreshed
- * more often than hourly.
+ * oneHour stays fresher than the rest: its payload only covers the trailing hour,
+ * so an hourly TTL would let the displayed window drift entirely into the past.
  * @param period The period for which to get the maximum age.
  * @returns The maximum age in milliseconds.
  */
 const getMaxAgeAllowed = (period: Periods): number => {
-  if (period === Periods.oneHour) return 60 * 60 * 1000 // 1 hour
+  if (period === Periods.oneHour) return 10 * 60 * 1000 // 10 minutes
   if (period === Periods.oneDay) return 60 * 60 * 1000 // 1 hour
   return 24 * 60 * 60 * 1000 // 24 hours for all other periods
 }
