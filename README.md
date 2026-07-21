@@ -44,9 +44,17 @@ The Worker `fetch` handler:
 
 - handles CORS preflight (`OPTIONS`) requests,
 - reads `period`, `fiat`, and optional `reset` query parameters,
+- rejects unsupported `period`/`fiat` values with `400` before any upstream call,
 - optionally clears KV storage if a valid reset token is supplied,
-- decides whether to serve cached data or refresh from upstream,
+- serves cached data with a stale-while-revalidate strategy (see below),
 - returns JSON with CORS headers on both success and error paths.
+
+Stale-while-revalidate: if cached data exists it is always served immediately. When it is
+stale, a refresh runs in the background (`ctx.waitUntil`) guarded by a best-effort KV lock
+that throttles refreshes to roughly one per key per minute per colo (KV is eventually
+consistent, so the lock deduplicates within a colo rather than globally). Upstream failures
+(e.g. rate limits) never surface to users once a key has been populated; only a completely
+cold cache blocks on an upstream fetch.
 
 ### 2) Cache Layer (`kv.ts`)
 
@@ -55,15 +63,20 @@ KV stores data by key pattern: `"${period}-${fiat}"`.
 The module provides:
 
 - `getDataForPeriod`: read cached payload,
-- `periodNeedsUpdate`: evaluate staleness by period,
+- `isStale`: evaluate staleness by period,
 - `updateDataForPeriod`: fetch fresh data and persist it,
+- `refreshDataForPeriod`: lock-guarded background refresh that swallows errors,
 - `resetKVStorage`: delete all keys in the namespace.
 
 Cache freshness policy:
 
-- `oneHour`: refresh after 1 minute,
+- `oneHour`: refresh after 10 minutes (its payload only covers the trailing hour, so an
+  hourly TTL would let the displayed window drift entirely into the past),
 - `oneDay`: refresh after 1 hour,
 - `oneWeek`, `oneMonth`, `oneYear`, `all`: refresh after 24 hours.
+
+Data keys never expire, so stale data is always available as a fallback when upstream
+providers fail.
 
 ### 3) Provider Orchestration (`fetcher.ts`)
 
@@ -93,7 +106,16 @@ Highlights:
 - supports all fiat values accepted by the project enum,
 - chooses interval strategy per period,
 - converts millisecond timestamps to seconds,
-- enforces free-tier practical limit for `all` by returning up to last year data.
+- enforces free-tier practical limit for `all` by returning up to last year data,
+- optionally authenticates with a Coingecko demo API key (`x-cg-demo-api-key`).
+
+Coingecko rate limits anonymous traffic by IP. Cloudflare Workers egress from shared IPs,
+so anonymous calls compete with every other Worker on those IPs and hit `429` easily.
+Setting a (free) demo API key gives the Worker its own quota:
+
+```bash
+npx wrangler secret put COINGECKO_API_KEY
+```
 
 ### 6) Shared Types (`types.ts`)
 
@@ -134,6 +156,8 @@ The Worker includes CORS headers on all responses:
 - `Access-Control-Allow-Headers: Content-Type`
 - `Access-Control-Max-Age: 86400`
 - `Content-Type: application/json`
+- `Cache-Control: public, max-age=300` on successful data responses (`no-store` on errors),
+  so clients absorb repeat requests for five minutes.
 
 ### Success Response
 
@@ -147,9 +171,17 @@ HTTP `200` with JSON payload:
 }
 ```
 
-### Error Response
+### Error Responses
 
-HTTP `500` with JSON payload:
+HTTP `400` for unsupported `period` or `fiat` values:
+
+```json
+{
+  "error": "Unsupported fiat, must be one of: EUR, USD, CHF, JPY, GBP, CNY, BRL"
+}
+```
+
+HTTP `500` when no cached data exists and all upstream providers fail:
 
 ```json
 {
@@ -220,7 +252,8 @@ Configuration lives in `wrangler.jsonc`, including:
 
 ## Future Improvements
 
-- Add explicit validation for unsupported `period`/`fiat` values and return `400`.
-- Add rate-limit/backoff handling for upstream provider errors.
+- Add a cron trigger that pre-warms the cache for all `period`/`fiat` combinations, so
+  users never trigger a cold synchronous upstream fetch.
+- Add more providers with fiat coverage beyond Coinbase (e.g. Binance for BRL) to spread
+  load away from Coingecko.
 - Add endpoint versioning for long-term API compatibility.
-- Expand automated tests for cache TTL and provider fallback scenarios.

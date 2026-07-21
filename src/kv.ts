@@ -1,5 +1,5 @@
 import { fetchDataForPeriod } from './fetcher'
-import { Env, Fiats, KVData, LivelineData, Periods } from './types'
+import { Env, Fiats, KVData, Periods } from './types'
 
 /**
  * This file contains functions to interact with the KV storage for caching the fetched data.
@@ -11,15 +11,12 @@ export const resetKVStorage = async (env: Env): Promise<void> => {
 }
 
 /**
- * Checks if the cached data for the given period needs to be updated based on the last update timestamp.
- * @param env The environment object containing the KV storage.
- * @param period The period for which to check if the cached data needs to be updated.
- * @param fiat The fiat currency for which to check if the cached data needs to be updated.
+ * Checks if the cached data is stale for the given period based on its write timestamp.
+ * @param data The cached data to check.
+ * @param period The period the data belongs to.
  * @returns boolean
  */
-export const periodNeedsUpdate = async (env: Env, period: Periods, fiat: Fiats): Promise<boolean> => {
-  const data = await loadData(env, getKey(period, fiat))
-  if (!data) return true
+export const isStale = (data: KVData, period: Periods): boolean => {
   return Date.now() - data.when > getMaxAgeAllowed(period)
 }
 
@@ -27,14 +24,42 @@ export const periodNeedsUpdate = async (env: Env, period: Periods, fiat: Fiats):
  * Updates the cached data for the given period by fetching new data
  * from the Coinbase or Coingecko API and storing it in the KV storage.
  * @param env The environment object containing the KV storage.
- * @param period The period for which to check if the cached data needs to be updated.
- * @param fiat The fiat currency for which to check if the cached data needs to be updated.
+ * @param period The period for which to update the cached data.
+ * @param fiat The fiat currency for which to update the cached data.
  * @returns The updated data for the given period.
  */
 export const updateDataForPeriod = async (env: Env, period: Periods, fiat: Fiats): Promise<KVData> => {
-  const kvData = await fetchDataForPeriod(period, fiat)
-  await saveData(env, getKey(period, fiat), kvData)
+  const kvData = await fetchDataForPeriod(period, fiat, env)
+  try {
+    await saveData(env, getKey(period, fiat), kvData)
+  } catch (error) {
+    // The fetched data is still good — serve it even if caching it failed
+    console.error(`Failed to cache data for ${getKey(period, fiat)}:`, error)
+  }
   return kvData
+}
+
+/**
+ * Background refresh used by the stale-while-revalidate flow. A best-effort KV
+ * lock ensures roughly one refresh per key per minute, so a burst of requests
+ * on a stale key doesn't stampede the upstream APIs. Errors are swallowed:
+ * the stale data keeps being served until a refresh eventually succeeds.
+ * @param env The environment object containing the KV storage.
+ * @param period The period for which to refresh the cached data.
+ * @param fiat The fiat currency for which to refresh the cached data.
+ */
+export const refreshDataForPeriod = async (env: Env, period: Periods, fiat: Fiats): Promise<void> => {
+  try {
+    const lockKey = `lock-${getKey(period, fiat)}`
+    const locked = await env.price_chart_proxy_kv.get(lockKey)
+    if (locked) return
+    await env.price_chart_proxy_kv.put(lockKey, '1', { expirationTtl: 60 })
+    await updateDataForPeriod(env, period, fiat)
+  } catch (error) {
+    // Swallowed on purpose (stale data keeps being served), but logged so a
+    // permanently failing upstream is visible in Workers Logs
+    console.error(`Background refresh failed for ${getKey(period, fiat)}:`, error)
+  }
 }
 
 /**
@@ -51,6 +76,8 @@ export const getDataForPeriod = async (env: Env, period: Periods, fiat: Fiats): 
 
 /**
  * Returns the maximum allowed age for updating the cached data based on the period.
+ * oneHour stays fresher than the rest: its payload only covers the trailing hour,
+ * so an hourly TTL would let the displayed window drift entirely into the past.
  * @param period The period for which to get the maximum age.
  * @returns The maximum age in milliseconds.
  */
@@ -81,6 +108,7 @@ const loadData = async (env: Env, key: string): Promise<KVData | null> => {
 
 /**
  * Saves data to the KV storage for the given key.
+ * Data keys never expire: stale data is always available as a fallback.
  * @param env The environment object containing the KV storage.
  * @param key The key for which to save the data.
  * @param data The data to be saved.
