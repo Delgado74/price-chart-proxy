@@ -23,26 +23,24 @@ const cachedData: KVData = {
   from: 'coinbase',
 }
 
-const mockCoinbaseSuccess = () => {
+const mockCoinbase = (status: number, body: string) => {
   fetchMock
     .get('https://api.exchange.coinbase.com')
     .intercept({ path: /^\/products\/BTC-USD\/candles/ })
-    .reply(200, JSON.stringify(coinbaseCandles))
+    .reply(status, body)
 }
 
-const mockCoinbaseFailure = () => {
-  fetchMock
-    .get('https://api.exchange.coinbase.com')
-    .intercept({ path: /^\/products\/BTC-USD\/candles/ })
-    .reply(500, 'Internal Server Error')
-}
-
-const mockCoingeckoRateLimited = () => {
+const mockCoingecko = (status: number, body: string) => {
   fetchMock
     .get('https://api.coingecko.com')
     .intercept({ path: /^\/api\/v3\/coins\/bitcoin\/market_chart/ })
-    .reply(429, JSON.stringify({ status: { error_code: 429, error_message: 'Rate limited' } }))
+    .reply(status, body)
 }
+
+const mockCoinbaseSuccess = () => mockCoinbase(200, JSON.stringify(coinbaseCandles))
+const mockCoinbaseFailure = () => mockCoinbase(500, 'Internal Server Error')
+const mockCoingeckoRateLimited = () =>
+  mockCoingecko(429, JSON.stringify({ status: { error_code: 429, error_message: 'Rate limited' } }))
 
 const makeRequest = async (path: string) => {
   const request = new Request(`http://example.com${path}`)

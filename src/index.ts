@@ -21,6 +21,9 @@ const respondWith = (data: any | null, code: number, cacheable = false) => {
   })
 }
 
+const validFiats = Object.values(Fiats)
+const validPeriods = Object.values(Periods)
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -28,14 +31,14 @@ export default {
     }
 
     // Extract params from request
-    const fiat = extractFiatFromRequest(request) // default to USD
-    const period = extractPeriodFromRequest(request) // default to oneDay
-    const resetToken = await extractResetTokenFromRequest(request) // optional
+    const params = new URL(request.url).searchParams
+    const fiat = parseEnumParam(params.get('fiat')?.toUpperCase(), validFiats, Fiats.USD)
+    const period = parseEnumParam(params.get('period'), validPeriods, Periods.oneDay)
+    const resetToken = params.get('reset') // optional
 
     // Reject invalid params early so they never reach (and burn quota on) upstream providers
-    if (!fiat) return respondWith({ error: `Unsupported fiat, must be one of: ${Object.values(Fiats).join(', ')}` }, 400)
-    if (!period)
-      return respondWith({ error: `Unsupported period, must be one of: ${Object.values(Periods).join(', ')}` }, 400)
+    if (!fiat) return respondWith({ error: `Unsupported fiat, must be one of: ${validFiats.join(', ')}` }, 400)
+    if (!period) return respondWith({ error: `Unsupported period, must be one of: ${validPeriods.join(', ')}` }, 400)
 
     // Check for reset token and reset KV storage if valid
     try {
@@ -48,9 +51,12 @@ export default {
     }
 
     let cached: KVData | null = null
+    let cacheReadFailed = false
     try {
       cached = await getDataForPeriod(env, period, fiat)
-    } catch {}
+    } catch {
+      cacheReadFailed = true
+    }
 
     // Stale-while-revalidate: always serve cached data immediately and refresh
     // in the background when stale, so upstream errors (e.g. rate limits) never
@@ -67,34 +73,22 @@ export default {
       const data = await updateDataForPeriod(env, period, fiat)
       return respondWith(data, 200, true)
     } catch (error) {
-      // The initial cache read may have failed transiently; retry it before giving up
-      try {
-        const data = await getDataForPeriod(env, period, fiat)
-        if (data) return respondWith(data, 200, true)
-      } catch {}
+      // If the initial cache read failed transiently, retry it before giving up
+      if (cacheReadFailed) {
+        try {
+          const data = await getDataForPeriod(env, period, fiat)
+          if (data) return respondWith(data, 200, true)
+        } catch {}
+      }
       return respondWith({ error: `Failed to update data: ${extractErrorMessage(error)}` }, 500)
     }
   },
 } satisfies ExportedHandler<Env>
 
-const extractPeriodFromRequest = (request: Request): Periods | null => {
-  const url = new URL(request.url)
-  const period = url.searchParams.get('period')
-  if (!period) return Periods.oneDay
-  return Object.values(Periods).includes(period as Periods) ? (period as Periods) : null
-}
-
-const extractFiatFromRequest = (request: Request): Fiats | null => {
-  const url = new URL(request.url)
-  const fiat = url.searchParams.get('fiat')
-  if (!fiat) return Fiats.USD
-  const upper = fiat.toUpperCase()
-  return Object.values(Fiats).includes(upper as Fiats) ? (upper as Fiats) : null
-}
-
-const extractResetTokenFromRequest = async (request: Request): Promise<string | null> => {
-  const url = new URL(request.url)
-  return url.searchParams.get('reset')
+// Missing param → fallback; present but not a valid enum value → null
+const parseEnumParam = <T extends string>(value: string | null | undefined, valid: T[], fallback: T): T | null => {
+  if (!value) return fallback
+  return valid.includes(value as T) ? (value as T) : null
 }
 
 const extractErrorMessage = (error: unknown): string => {

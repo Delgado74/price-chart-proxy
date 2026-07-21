@@ -29,7 +29,7 @@ export const isStale = (data: KVData, period: Periods): boolean => {
  * @returns The updated data for the given period.
  */
 export const updateDataForPeriod = async (env: Env, period: Periods, fiat: Fiats): Promise<KVData> => {
-  const kvData = await fetchDataForPeriod(period, fiat, env.COINGECKO_API_KEY)
+  const kvData = await fetchDataForPeriod(period, fiat, env)
   await saveData(env, getKey(period, fiat), kvData)
   return kvData
 }
