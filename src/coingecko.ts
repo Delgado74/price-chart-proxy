@@ -40,20 +40,20 @@ export const isSupportedFiat = (fiat: string): fiat is Fiats => {
  * @param period The period for which to fetch data.
  * @returns A promise that resolves to the historical price data for the given period.
  */
-export const fetchDataForPeriod = async (period: Periods, fiat: Fiats): Promise<LivelineData> => {
+export const fetchDataForPeriod = async (period: Periods, fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
   switch (period) {
     case Periods.oneHour:
-      return await fetchLastHourData(fiat)
+      return await fetchLastHourData(fiat, apiKey)
     case Periods.oneDay:
-      return await fetchLastDayData(fiat)
+      return await fetchLastDayData(fiat, apiKey)
     case Periods.oneWeek:
-      return await fetchLastWeekData(fiat)
+      return await fetchLastWeekData(fiat, apiKey)
     case Periods.oneMonth:
-      return await fetchLastMonthData(fiat)
+      return await fetchLastMonthData(fiat, apiKey)
     case Periods.oneYear:
-      return await fetchLastYearData(fiat)
+      return await fetchLastYearData(fiat, apiKey)
     case Periods.all:
-      return await fetchAllData(fiat)
+      return await fetchAllData(fiat, apiKey)
     default:
       throw new Error(`Unsupported period: ${period}`)
   }
@@ -64,12 +64,12 @@ export const fetchDataForPeriod = async (period: Periods, fiat: Fiats): Promise<
  * @param fiat The fiat currency for which to fetch historical price data.
  * @returns A promise that resolves to the historical price data for the last hour.
  */
-const fetchLastHourData = async (fiat: Fiats): Promise<LivelineData> => {
+const fetchLastHourData = async (fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
   const days = 1
   const oneHour = 60 * 60 * 1000
   const granularity = Granularities.max
   const startTime = new Date(Date.now() - oneHour)
-  const data = await getData(days, granularity, fiat)
+  const data = await getData(days, granularity, fiat, apiKey)
   return data.filter((point) => point.time * 1000 > startTime.getTime())
 }
 
@@ -78,12 +78,12 @@ const fetchLastHourData = async (fiat: Fiats): Promise<LivelineData> => {
  * @param fiat The fiat currency for which to fetch historical price data.
  * @returns A promise that resolves to the historical price data for the last day.
  */
-const fetchLastDayData = async (fiat: Fiats): Promise<LivelineData> => {
+const fetchLastDayData = async (fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
   const days = 1
   const oneDay = 24 * 60 * 60 * 1000
   const granularity = Granularities.hourly
   const startTime = new Date(Date.now() - oneDay)
-  const data = await getData(days, granularity, fiat)
+  const data = await getData(days, granularity, fiat, apiKey)
   return data.filter((point) => point.time * 1000 > startTime.getTime())
 }
 
@@ -92,12 +92,12 @@ const fetchLastDayData = async (fiat: Fiats): Promise<LivelineData> => {
  * @param fiat The fiat currency for which to fetch historical price data.
  * @returns A promise that resolves to the historical price data for the last week.
  */
-const fetchLastWeekData = async (fiat: Fiats): Promise<LivelineData> => {
+const fetchLastWeekData = async (fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
   const days = 7
   const oneWeek = 7 * 24 * 60 * 60 * 1000
   const granularity = Granularities.hourly
   const startTime = new Date(Date.now() - oneWeek)
-  const data = await getData(days, granularity, fiat)
+  const data = await getData(days, granularity, fiat, apiKey)
   return data.filter((point) => point.time * 1000 > startTime.getTime())
 }
 
@@ -106,12 +106,12 @@ const fetchLastWeekData = async (fiat: Fiats): Promise<LivelineData> => {
  * @param fiat The fiat currency for which to fetch historical price data.
  * @returns A promise that resolves to the historical price data for the last month.
  */
-const fetchLastMonthData = async (fiat: Fiats): Promise<LivelineData> => {
+const fetchLastMonthData = async (fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
   const days = 30
   const granularity = Granularities.daily
   const oneMonth = 30 * 24 * 60 * 60 * 1000
   const startTime = new Date(Date.now() - oneMonth)
-  const data = await getData(days, granularity, fiat)
+  const data = await getData(days, granularity, fiat, apiKey)
   return data.filter((point) => point.time * 1000 > startTime.getTime())
 }
 
@@ -120,12 +120,12 @@ const fetchLastMonthData = async (fiat: Fiats): Promise<LivelineData> => {
  * @param fiat The fiat currency for which to fetch historical price data.
  * @returns A promise that resolves to the historical price data for the last year.
  */
-const fetchLastYearData = async (fiat: Fiats): Promise<LivelineData> => {
+const fetchLastYearData = async (fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
   const days = 365
   const granularity = Granularities.daily
   const oneYear = 365 * 24 * 60 * 60 * 1000
   const startTime = new Date(Date.now() - oneYear)
-  const data = await getData(days, granularity, fiat)
+  const data = await getData(days, granularity, fiat, apiKey)
   return data.filter((point) => point.time * 1000 > startTime.getTime())
 }
 
@@ -134,8 +134,8 @@ const fetchLastYearData = async (fiat: Fiats): Promise<LivelineData> => {
  * @param fiat The fiat currency for which to fetch historical price data.
  * @returns A promise that resolves to the historical price data for all periods.
  */
-const fetchAllData = async (fiat: Fiats): Promise<LivelineData> => {
-  return fetchLastYearData(fiat) // Coingecko free tier only allows a max of 365 days of data
+const fetchAllData = async (fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
+  return fetchLastYearData(fiat, apiKey) // Coingecko free tier only allows a max of 365 days of data
 }
 
 /**
@@ -143,12 +143,14 @@ const fetchAllData = async (fiat: Fiats): Promise<LivelineData> => {
  * @param days The number of days for which to fetch data.
  * @param granularity The granularity of the data in seconds.
  * @param fiat The fiat currency for which to fetch historical price data.
+ * @param apiKey Optional Coingecko demo API key, sent as x-cg-demo-api-key for dedicated rate limits.
  * @returns A promise that resolves to the historical price data for the given date range.
  */
-const getData = async (days: number, granularity: Granularities, fiat: Fiats): Promise<LivelineData> => {
+const getData = async (days: number, granularity: Granularities, fiat: Fiats, apiKey?: string): Promise<LivelineData> => {
   const url = getUrl(days, granularity, fiat)
-  const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
-  const coingeckoResponse = await fetch(url, { headers: { 'User-Agent': ua } })
+  const headers: Record<string, string> = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }
+  if (apiKey) headers['x-cg-demo-api-key'] = apiKey
+  const coingeckoResponse = await fetch(url, { headers })
   if (!coingeckoResponse.ok) {
     const body = await coingeckoResponse.text()
     const { status, statusText } = coingeckoResponse

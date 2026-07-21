@@ -14,16 +14,17 @@ import { Fiats, KVData, Periods } from './types'
  * to the Coingecko API if the Coinbase API fails or returns no data.
  * @param period The period for which to fetch historical price data.
  * @param fiat The fiat currency for which to fetch historical price data.
+ * @param coingeckoApiKey Optional Coingecko demo API key for higher rate limits.
  * @returns A promise that resolves to the historical price data for the given period.
  */
-export const fetchDataForPeriod = async (period: Periods, fiat: Fiats): Promise<KVData> => {
+export const fetchDataForPeriod = async (period: Periods, fiat: Fiats, coingeckoApiKey?: string): Promise<KVData> => {
   try {
     if (!coinbase.isSupportedFiat(fiat)) throw new Error(`Unsupported trading pair: BTC-${fiat}`)
     const data = await coinbase.fetchDataForPeriod(period, fiat)
     if (!data || data.length === 0) throw new Error('No data returned from Coinbase API')
     return { data, from: 'coinbase', when: Date.now() }
   } catch {
-    const data = await coingecko.fetchDataForPeriod(period, fiat)
+    const data = await coingecko.fetchDataForPeriod(period, fiat, coingeckoApiKey)
     if (!data || data.length === 0) throw new Error('No data returned from Coingecko API')
     return { data, from: 'coingecko', when: Date.now() }
   }

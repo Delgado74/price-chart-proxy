@@ -1,5 +1,6 @@
 export interface Env {
   price_chart_proxy_kv: KVNamespace
+  COINGECKO_API_KEY?: string
 }
 
 export enum Fiats {

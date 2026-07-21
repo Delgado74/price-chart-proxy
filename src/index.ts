@@ -1,6 +1,6 @@
 import { isValidResetToken } from './utils'
 import { Env, Fiats, KVData, Periods } from './types'
-import { getDataForPeriod, periodNeedsUpdate, resetKVStorage, updateDataForPeriod } from './kv'
+import { getDataForPeriod, isStale, refreshDataForPeriod, resetKVStorage, updateDataForPeriod } from './kv'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -9,29 +9,33 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 }
 
-const respondWith = (data: any | null, code: number) => {
+const respondWith = (data: any | null, code: number, cacheable = false) => {
   const responseData = data ? JSON.stringify(data) : null
   return new Response(responseData, {
     status: code,
     headers: {
       ...corsHeaders,
       'content-type': 'application/json',
+      'cache-control': cacheable ? 'public, max-age=300' : 'no-store',
     },
   })
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return respondWith(null, 204)
     }
-
-    let data: KVData | null = null
 
     // Extract params from request
     const fiat = extractFiatFromRequest(request) // default to USD
     const period = extractPeriodFromRequest(request) // default to oneDay
     const resetToken = await extractResetTokenFromRequest(request) // optional
+
+    // Reject invalid params early so they never reach (and burn quota on) upstream providers
+    if (!fiat) return respondWith({ error: `Unsupported fiat, must be one of: ${Object.values(Fiats).join(', ')}` }, 400)
+    if (!period)
+      return respondWith({ error: `Unsupported period, must be one of: ${Object.values(Periods).join(', ')}` }, 400)
 
     // Check for reset token and reset KV storage if valid
     try {
@@ -43,55 +47,49 @@ export default {
       return respondWith({ error: `Unable to reset KV storage: ${extractErrorMessage(error)}` }, 500)
     }
 
-    // Determine whether cached data is stale; if we can't tell, assume an update is needed.
-    let needsUpdate = true
+    let cached: KVData | null = null
     try {
-      needsUpdate = await periodNeedsUpdate(env, period, fiat)
-    } catch {
-      needsUpdate = true
+      cached = await getDataForPeriod(env, period, fiat)
+    } catch {}
+
+    // Stale-while-revalidate: always serve cached data immediately and refresh
+    // in the background when stale, so upstream errors (e.g. rate limits) never
+    // surface to users once a key has been populated.
+    if (cached) {
+      if (isStale(cached, period)) {
+        ctx.waitUntil(refreshDataForPeriod(env, period, fiat))
+      }
+      return respondWith(cached, 200, true)
     }
 
-    if (needsUpdate) {
+    // Cold cache: fetch synchronously as we have nothing to serve
+    try {
+      const data = await updateDataForPeriod(env, period, fiat)
+      return respondWith(data, 200, true)
+    } catch (error) {
+      // The initial cache read may have failed transiently; retry it before giving up
       try {
-        data = await updateDataForPeriod(env, period, fiat)
-      } catch (error) {
-        // Fallback to cached data if updating fails
-        try {
-          data = await getDataForPeriod(env, period, fiat)
-        } catch {}
-
-        if (!data) {
-          return respondWith({ error: `Failed to update data: ${extractErrorMessage(error)}` }, 500)
-        }
-      }
-    } else {
-      try {
-        data = await getDataForPeriod(env, period, fiat)
-      } catch (error) {
-        // If cache read fails, try to refresh as a last resort.
-        try {
-          data = await updateDataForPeriod(env, period, fiat)
-        } catch {
-          return respondWith({ error: `Failed to get data: ${extractErrorMessage(error)}` }, 500)
-        }
-      }
+        const data = await getDataForPeriod(env, period, fiat)
+        if (data) return respondWith(data, 200, true)
+      } catch {}
+      return respondWith({ error: `Failed to update data: ${extractErrorMessage(error)}` }, 500)
     }
-
-    const result = data ?? { error: 'No data available' }
-    return respondWith(result, 200)
   },
 } satisfies ExportedHandler<Env>
 
-const extractPeriodFromRequest = (request: Request): Periods => {
+const extractPeriodFromRequest = (request: Request): Periods | null => {
   const url = new URL(request.url)
   const period = url.searchParams.get('period')
-  return (period as Periods) ?? Periods.oneDay
+  if (!period) return Periods.oneDay
+  return Object.values(Periods).includes(period as Periods) ? (period as Periods) : null
 }
 
-const extractFiatFromRequest = (request: Request): Fiats => {
+const extractFiatFromRequest = (request: Request): Fiats | null => {
   const url = new URL(request.url)
   const fiat = url.searchParams.get('fiat')
-  return (fiat?.toUpperCase() as Fiats) ?? Fiats.USD
+  if (!fiat) return Fiats.USD
+  const upper = fiat.toUpperCase()
+  return Object.values(Fiats).includes(upper as Fiats) ? (upper as Fiats) : null
 }
 
 const extractResetTokenFromRequest = async (request: Request): Promise<string | null> => {
