@@ -25,6 +25,14 @@ on:
         description: Optional request body
         required: false
         default: ""
+      jq:
+        description: Optional jq filter applied to the JSON response (instead of raw dump)
+        required: false
+        default: ""
+      max_bytes:
+        description: Max bytes to print when no jq filter is set
+        required: false
+        default: "4000"
 
 permissions:
   contents: read
@@ -39,6 +47,8 @@ jobs:
           METHOD: ${{ inputs.method }}
           HEADER: ${{ inputs.header }}
           BODY: ${{ inputs.body }}
+          JQ: ${{ inputs.jq }}
+          MAX_BYTES: ${{ inputs.max_bytes }}
         run: |
           set +e
           args=(-sS -m 25 -L -X "$METHOD" -w "\n[HTTP %{http_code} | %{content_type} | %{size_download}b | final=%{url_effective}]\n")
@@ -49,6 +59,10 @@ jobs:
             echo "URL: $u"
             host=$(echo "$u" | sed -E 's#https?://([^/]+).*#\1#')
             echo "DNS: $(getent hosts "$host" | head -1)"
-            curl "${args[@]}" "$u" | head -c 4000
+            if [ -n "$JQ" ]; then
+              curl "${args[@]}" "$u" | jq "$JQ"
+            else
+              curl "${args[@]}" "$u" | head -c "$MAX_BYTES"
+            fi
             echo
           done
