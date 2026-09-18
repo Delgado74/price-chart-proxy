@@ -18,7 +18,7 @@ on:
         required: false
         default: GET
       header:
-        description: Optional single request header, e.g. "Authorization: Bearer x"
+        description: 'Optional single request header, e.g. "Authorization: Bearer x"'
         required: false
         default: ""
       body:
