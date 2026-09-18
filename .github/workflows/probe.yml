@@ -1,0 +1,54 @@
+name: probe
+
+# Runs arbitrary HTTP probes from a clean GitHub runner. Useful to reach hosts
+# that are blocked from a local network (e.g. eltoque.com from within Cuba).
+# Lives only on the fork's default branch so it never appears in a PR upstream.
+#
+# Usage:
+#   gh workflow run probe.yml --repo Delgado74/price-chart-proxy \
+#     -f urls="https://eltoque.com/ https://api.eltoque.com/trmi"
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: Space-separated URLs to request
+        required: true
+      method:
+        description: HTTP method
+        required: false
+        default: GET
+      header:
+        description: Optional single request header, e.g. "Authorization: Bearer x"
+        required: false
+        default: ""
+      body:
+        description: Optional request body
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe
+        env:
+          URLS: ${{ inputs.urls }}
+          METHOD: ${{ inputs.method }}
+          HEADER: ${{ inputs.header }}
+          BODY: ${{ inputs.body }}
+        run: |
+          set +e
+          args=(-sS -m 25 -L -X "$METHOD" -w "\n[HTTP %{http_code} | %{content_type} | %{size_download}b | final=%{url_effective}]\n")
+          [ -n "$HEADER" ] && args+=(-H "$HEADER")
+          [ -n "$BODY" ] && args+=(--data "$BODY")
+          for u in $URLS; do
+            echo "============================================================"
+            echo "URL: $u"
+            host=$(echo "$u" | sed -E 's#https?://([^/]+).*#\1#')
+            echo "DNS: $(getent hosts "$host" | head -1)"
+            curl "${args[@]}" "$u" | head -c 4000
+            echo
+          done
