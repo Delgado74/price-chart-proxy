@@ -1,0 +1,60 @@
+name: fork-ci
+
+# Manual dev runner for the fork. It lives only on the fork's default branch so
+# it never shows up in a PR to upstream: we dispatch it with a `ref` input and
+# it checks out that branch/tag/SHA to install, typecheck, test and build.
+#
+# Usage:
+#   gh workflow run fork-ci.yml \
+#     --repo Delgado74/price-chart-proxy \
+#     -f ref=feat/cup-price-feed
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to run against
+        required: true
+        default: master
+      command:
+        description: Command to run after install
+        required: false
+        default: pnpm exec vitest run
+      install_args:
+        description: Extra arguments for pnpm install
+        required: false
+        default: --frozen-lockfile
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ${{ inputs.ref }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install ${{ inputs.install_args }}
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Run command
+        run: ${{ inputs.command }}
+
+      - name: Build (wrangler dry-run)
+        run: pnpm exec wrangler deploy --dry-run --outdir dist
