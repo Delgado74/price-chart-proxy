@@ -23,7 +23,7 @@ Where:
 - `time` is a Unix timestamp in seconds.
 - `value` is the price value for that point.
 - `when` is the cache write timestamp in milliseconds.
-- `from` indicates which provider supplied the data (`coinbase` or `coingecko`).
+- `from` indicates which provider supplied the data (`coinbase`, `coingecko` or `tasak`).
 
 ## What The Project Solves
 
@@ -122,10 +122,35 @@ npx wrangler secret put COINGECKO_API_KEY
 Defines strong contracts for:
 
 - `Periods`: `oneHour`, `oneDay`, `oneWeek`, `oneMonth`, `oneYear`, `all`,
-- `Fiats`: `EUR`, `USD`, `CHF`, `JPY`, `GBP`, `CNY`, `BRL`,
+- `Fiats`: `EUR`, `USD`, `CHF`, `JPY`, `GBP`, `CNY`, `BRL`, `CUP`,
 - `LivelinePoint`: `{ time, value }`,
 - `KVData`: `{ data, when, from }`,
-- `Env`: Cloudflare binding for KV namespace.
+- `Env`: Cloudflare binding for KV namespace, plus the optional provider secrets.
+
+### 7) tasak Adapter (`tasak.ts`)
+
+Backs `CUP`, which has no Coinbase/Coingecko pair. It reads the P2P trade archive
+of a [tasak](https://github.com/Forte11Cuba/tasak) instance: every completed
+Mostro order is a signed Nostr event, and tasak serves the whole series as static
+JSON at `{TASAK_URL}/api/history.json`:
+
+```json
+{
+  "when": 1760000000,
+  "from": "tasak",
+  "data": [{ "time": 1759999000, "value": 63800922.56, "size": 1200 }]
+}
+```
+
+- `time` is the unix seconds of the order, `value` the CUP per BTC it traded at
+  and `size` the CUP amount it moved (used to weight the buckets).
+- The series is bucketized to a volume-weighted average (VWAP) per period,
+  following Coinbase's granularity convention: `oneHour` → 5 min, `oneDay` → 1 h,
+  `oneWeek` → 6 h, `oneMonth`/`oneYear`/`all` → 1 D.
+- Buckets without trades repeat the previous value (forward-fill), so the line
+  stays continuous; `all` covers everything the instance has archived.
+- Set the instance with the `TASAK_URL` variable (see Deployment). No CUP-specific
+  secret is needed.
 
 ## API Contract
 
@@ -142,10 +167,10 @@ Defines strong contracts for:
 ### Supported Values
 
 - `period`: `oneHour`, `oneDay`, `oneWeek`, `oneMonth`, `oneYear`, `all`
-- `fiat`: `EUR`, `USD`, `CHF`, `JPY`, `GBP`, `CNY`, `BRL`
+- `fiat`: `EUR`, `USD`, `CHF`, `JPY`, `GBP`, `CNY`, `BRL`, `CUP`
 
 Note: Coinbase does not support every fiat above; unsupported Coinbase pairs are automatically
-served by the Coingecko fallback.
+served by the Coingecko fallback. `CUP` is served by the tasak provider (see below).
 
 ### Response Headers
 
@@ -240,6 +265,13 @@ Configuration lives in `wrangler.jsonc`, including:
 - compatibility date,
 - observability settings,
 - KV namespace binding (`price_chart_proxy_kv`).
+
+To enable the `CUP` series, set the base URL of a tasak instance as a var in
+`wrangler.jsonc` (or as a secret):
+
+```jsonc
+"vars": { "TASAK_URL": "https://tasa.example.org" }
+```
 
 ## Design Notes And Trade-Offs
 

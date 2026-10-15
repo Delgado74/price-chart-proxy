@@ -1,6 +1,8 @@
 export interface Env {
   price_chart_proxy_kv: KVNamespace
   COINGECKO_API_KEY?: string
+  /** Base URL of the tasak instance backing the CUP series (e.g. https://tasa.example.org) */
+  TASAK_URL?: string
 }
 
 export enum Fiats {
@@ -11,6 +13,7 @@ export enum Fiats {
   GBP = 'GBP',
   CNY = 'CNY',
   BRL = 'BRL',
+  CUP = 'CUP',
 }
 
 export type LivelinePoint = {

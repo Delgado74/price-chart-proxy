@@ -1,5 +1,6 @@
 import * as coinbase from './coinbase'
 import * as coingecko from './coingecko'
+import * as tasak from './tasak'
 import { Env, Fiats, KVData, Periods } from './types'
 
 /**
@@ -18,6 +19,11 @@ import { Env, Fiats, KVData, Periods } from './types'
  * @returns A promise that resolves to the historical price data for the given period.
  */
 export const fetchDataForPeriod = async (period: Periods, fiat: Fiats, env: Env): Promise<KVData> => {
+  // CUP has no Coinbase/Coingecko pair: it comes from the tasak P2P trade archive.
+  if (tasak.isSupportedFiat(fiat)) {
+    const data = await tasak.fetchDataForPeriod(period, env)
+    return { data, from: 'tasak', when: Date.now() }
+  }
   try {
     if (!coinbase.isSupportedFiat(fiat)) throw new Error(`Unsupported trading pair: BTC-${fiat}`)
     const data = await coinbase.fetchDataForPeriod(period, fiat)
